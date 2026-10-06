@@ -67,30 +67,8 @@ jobs:
           echo "ELF=$ELF" >> "$GITHUB_ENV"
           file "$ELF"
 
-      - name: Confirm current master reproduces issue 22606
-        shell: bash
+      - name: Run issue 22606 regression test
         run: |
-          set +e
-
           python3 \
             tests/drivers/ethos_rx_preserve/tests/01-repro.py \
-            "$ELF" \
-            2>&1 | tee /tmp/22606-repro.log
-
-          rc=${PIPESTATUS[0]}
-
-          set -e
-
-          echo "reproducer exit code: $rc"
-
-          if [ "$rc" -eq 0 ]; then
-            echo "ERROR: reproducer unexpectedly passed on the buggy baseline"
-            exit 1
-          fi
-
-          grep -F \
-            "FAIL: queued DATA was lost after TEXT header" \
-            /tmp/22606-repro.log
-
-          echo
-          echo "Expected failure reproduced successfully."
+            "$ELF"
