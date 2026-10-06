@@ -36,6 +36,22 @@ TEXT_HEADER = bytes([
     0x21,             # ETHOS_FRAME_TYPE_TEXT (0x01) ^ 0x20
 ])
 
+ESCAPED_DELIM_FRAME = bytes([
+    0x7E,
+    0xAA,
+    0x7D, 0x5E,   # escaped 0x7e
+    0xBB,
+    0x7E,
+])
+
+ESCAPED_ESC_FRAME = bytes([
+    0x7E,
+    0xAA,
+    0x7D, 0x5D,   # escaped 0x7d
+    0xBB,
+    0x7E,
+])
+
 STATUS_RE = re.compile(
     r"ETHOS_TEST pending=(\d+) held=(\d+) state=(\d+) type=(\d+)"
 )
@@ -45,6 +61,11 @@ def status(child):
     child.sendline("ethos_status")
     child.expect(STATUS_RE)
     return tuple(int(child.match.group(i)) for i in range(1, 5))
+
+
+def recv_frame(child, expected):
+    child.sendline("ethos_recv")
+    child.expect_exact(expected)
 
 
 def main():
@@ -126,6 +147,48 @@ def main():
             return 1
 
         print("PASS: queued DATA survived TEXT header")
+
+        # Finish the TEXT frame so the parser returns to WAIT_FRAMESTART
+        # before starting the compatibility tests.
+        os.write(master_fd, bytes([0x7E]))
+
+        reset = None
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            cur = status(child)
+
+            # line_state_t:
+            #   WAIT_FRAMESTART = 0
+            # frametype is reset to 0 by _reset_state().
+            if cur[2] == 0 and cur[3] == 0:
+                reset = cur
+                break
+
+            time.sleep(0.01)
+
+        if reset is None:
+            print("FAIL: parser did not return to WAIT_FRAMESTART")
+            return 1
+
+        # Consume the DATA frame that survived the TEXT header.
+        recv_frame(child, "ETHOS_TEST recv=4 data=aabbccdd")
+
+        # Verify that an escaped frame delimiter still decodes to 0x7e.
+        os.write(master_fd, ESCAPED_DELIM_FRAME)
+        child.expect(r"ETHOS_TEST RX_HELD \d+")
+
+        recv_frame(child, "ETHOS_TEST recv=3 data=aa7ebb")
+
+        print("PASS: escaped frame delimiter decoded correctly")
+
+        # Verify that an escaped ESC byte still decodes to 0x7d.
+        os.write(master_fd, ESCAPED_ESC_FRAME)
+        child.expect(r"ETHOS_TEST RX_HELD \d+")
+
+        recv_frame(child, "ETHOS_TEST recv=3 data=aa7dbb")
+
+        print("PASS: escaped ESC decoded correctly")
+
         return 0
 
     finally:

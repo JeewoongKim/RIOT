@@ -82,8 +82,32 @@ static int _cmd_status(int argc, char **argv)
     return 0;
 }
 
+static int _cmd_recv(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    uint8_t buf[64];
+
+    int res = _ethos.netdev.driver->recv(
+        &_ethos.netdev, buf, sizeof(buf), NULL
+    );
+
+    printf("ETHOS_TEST recv=%d data=", res);
+
+    if (res > 0) {
+        for (int i = 0; i < res; i++) {
+            printf("%02x", buf[i]);
+        }
+    }
+
+    puts("");
+    return 0;
+}
+
 SHELL_COMMAND(ethos_hold, "hold/release ETHOS RX_COMPLETE", _cmd_hold);
 SHELL_COMMAND(ethos_status, "show queued ETHOS RX state", _cmd_status);
+SHELL_COMMAND(ethos_recv, "receive one ETHOS frame", _cmd_recv);
 
 int main(void)
 {
