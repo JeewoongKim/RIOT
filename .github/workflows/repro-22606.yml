@@ -1,0 +1,96 @@
+name: RIOT 22606 reproducer
+
+on:
+  push:
+    branches:
+      - fix-22606-ethos-rx
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          uname -a
+          uname -m
+          gcc -dumpmachine
+          gcc --version | head -1
+          df -h /
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            python3 \
+            python3-pexpect
+
+      - name: Build native64 baseline
+        run: |
+          make -C examples/basic/hello-world \
+            BOARD=native64 \
+            -j"$(nproc)" \
+            all
+
+      - name: Run native64 baseline
+        run: |
+          timeout 5s \
+            ./examples/basic/hello-world/bin/native64/hello-world.elf \
+            || test "$?" = "124"
+
+      - name: Build ETHOS regression reproducer
+        run: |
+          make -C tests/drivers/ethos_rx_preserve \
+            BOARD=native64 \
+            -j"$(nproc)" \
+            all
+
+      - name: Locate reproducer ELF
+        run: |
+          ELF="$(
+            find tests/drivers/ethos_rx_preserve/bin/native64 \
+              -maxdepth 1 \
+              -name '*.elf' \
+              -print \
+              -quit
+          )"
+
+          test -n "$ELF"
+
+          echo "ELF=$ELF" >> "$GITHUB_ENV"
+          file "$ELF"
+
+      - name: Confirm current master reproduces issue 22606
+        shell: bash
+        run: |
+          set +e
+
+          python3 \
+            tests/drivers/ethos_rx_preserve/tests/01-repro.py \
+            "$ELF" \
+            2>&1 | tee /tmp/22606-repro.log
+
+          rc=${PIPESTATUS[0]}
+
+          set -e
+
+          echo "reproducer exit code: $rc"
+
+          if [ "$rc" -eq 0 ]; then
+            echo "ERROR: reproducer unexpectedly passed on the buggy baseline"
+            exit 1
+          fi
+
+          grep -F \
+            "FAIL: queued DATA was lost after TEXT header" \
+            /tmp/22606-repro.log
+
+          echo
+          echo "Expected failure reproduced successfully."
